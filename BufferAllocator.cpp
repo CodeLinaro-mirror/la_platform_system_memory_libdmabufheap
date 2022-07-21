@@ -20,7 +20,11 @@
 
 #include <errno.h>
 #include <fcntl.h>
-#include <ion/ion.h>
+
+#ifdef ION_SUPPORT
+    #include <ion/ion.h>
+#endif
+
 #include <linux/dma-buf.h>
 #include <linux/dma-heap.h>
 #include <stdlib.h>
@@ -29,6 +33,7 @@
 #include <sys/ioctl.h>
 #include <dirent.h>
 
+#include <mutex>
 #include <shared_mutex>
 #include <string>
 #include <unordered_set>
@@ -89,11 +94,12 @@ int BufferAllocator::OpenDmabufHeap(const std::string& heap_name) {
     LOG(INFO) << "Using DMA-BUF heap named: " << heap_name;
 
     auto ret = dmabuf_heap_fds_.insert({heap_name, fd});
-    CHECK(ret.second);
+    CHECK(ret.second); // Undefined
     return fd;
 }
 
 void BufferAllocator::QueryIonHeaps() {
+#ifdef ION_SUPPORT
     uses_legacy_ion_iface_ = ion_is_legacy(ion_fd_);
     if (uses_legacy_ion_iface_) {
         LogInterface("Legacy ion heaps");
@@ -120,6 +126,7 @@ void BufferAllocator::QueryIonHeaps() {
      */
     MapNameToIonName(kDmabufSystemHeapName, kIonSystemHeapName, ION_FLAG_CACHED);
     MapNameToIonName(kDmabufSystemUncachedHeapName, kIonSystemHeapName);
+#endif
 }
 
 BufferAllocator::BufferAllocator() {
@@ -130,16 +137,19 @@ BufferAllocator::BufferAllocator() {
 
 int BufferAllocator::MapNameToIonMask(const std::string& heap_name, unsigned int ion_heap_mask,
                                       unsigned int ion_heap_flags) {
+#ifdef ION_SUPPORT
     if (!ion_heap_mask)
         return -EINVAL;
     IonHeapConfig heap_config = { ion_heap_mask, ion_heap_flags };
 
     std::unique_lock<std::shared_mutex> ulock(heap_name_to_config_mutex_);
     heap_name_to_config_[heap_name] = heap_config;
+#endif
     return 0;
 }
 
 int BufferAllocator::GetIonHeapIdByName(const std::string& heap_name, unsigned int* heap_id) {
+#ifdef ION_SUPPORT
     for (auto& it : ion_heap_info_) {
         if (heap_name == it.name) {
             *heap_id = it.heap_id;
@@ -149,11 +159,15 @@ int BufferAllocator::GetIonHeapIdByName(const std::string& heap_name, unsigned i
 
     LOG(ERROR) << "No ion heap of name " << heap_name << " exists";
     return -EINVAL;
+#endif
+    return 0;
 }
 
 int BufferAllocator::MapNameToIonName(const std::string& heap_name,
                                       const std::string& ion_heap_name,
                                       unsigned int ion_heap_flags) {
+
+#ifdef ION_SUPPORT
     unsigned int ion_heap_id = 0;
     auto ret = GetIonHeapIdByName(ion_heap_name, &ion_heap_id);
     if (ret < 0)
@@ -165,6 +179,7 @@ int BufferAllocator::MapNameToIonName(const std::string& heap_name,
     std::unique_lock<std::shared_mutex> ulock(heap_name_to_config_mutex_);
     heap_name_to_config_[heap_name] = heap_config;
 
+#endif
     return 0;
 }
 
@@ -191,6 +206,7 @@ int BufferAllocator::MapNameToIonHeap(const std::string& heap_name,
 }
 
 int BufferAllocator::GetIonConfig(const std::string& heap_name, IonHeapConfig& heap_config) {
+#ifdef ION_SUPPORT
     int ret = 0;
 
     std::shared_lock<std::shared_mutex> slock(heap_name_to_config_mutex_);
@@ -220,8 +236,9 @@ int BufferAllocator::GetIonConfig(const std::string& heap_name, IonHeapConfig& h
     if (ret)
         LOG(ERROR) << "No ion heap of name " << heap_name << " exists";
     return ret;
+#endif
+    return 0;
 }
-
 int BufferAllocator::DmabufAlloc(const std::string& heap_name, size_t len) {
     int fd = OpenDmabufHeap(heap_name);
     if (fd < 0) return fd;
@@ -242,6 +259,7 @@ int BufferAllocator::DmabufAlloc(const std::string& heap_name, size_t len) {
 
 int BufferAllocator::IonAlloc(const std::string& heap_name, size_t len,
                               unsigned int heap_flags, size_t legacy_align) {
+#ifdef ION_SUPPORT
     IonHeapConfig heap_config;
     auto ret = GetIonConfig(heap_name, heap_config);
     if (ret)
@@ -256,15 +274,18 @@ int BufferAllocator::IonAlloc(const std::string& heap_name, size_t len,
         return ret;
     }
     return alloc_fd;
+#endif
+    return 0;
 }
 
 int BufferAllocator::Alloc(const std::string& heap_name, size_t len,
                            unsigned int heap_flags, size_t legacy_align) {
     int fd = DmabufAlloc(heap_name, len);
 
+#ifdef ION_SUPPORT
     if (fd < 0)
         fd = IonAlloc(heap_name, len, heap_flags, legacy_align);
-
+#endif
     return fd;
 }
 
@@ -299,10 +320,10 @@ int BufferAllocator::AllocSystem(bool cpu_access_needed, size_t len, unsigned in
      */
     return Alloc(kDmabufSystemHeapName, len, heap_flags, legacy_align);
 }
-
 int BufferAllocator::LegacyIonCpuSync(unsigned int dmabuf_fd,
                                       const CustomCpuSyncLegacyIon& legacy_ion_cpu_sync_custom,
                                       void *legacy_ion_custom_data) {
+#ifdef ION_SUPPORT
     if (!legacy_ion_cpu_sync_custom)
         return ion_sync_fd(ion_fd_, dmabuf_fd);
 
@@ -317,6 +338,8 @@ int BufferAllocator::LegacyIonCpuSync(unsigned int dmabuf_fd,
 
     close(new_ion_fd);
     return ret;
+#endif
+    return 0;
 }
 
 int BufferAllocator::DoSync(unsigned int dmabuf_fd, bool start, SyncType sync_type,

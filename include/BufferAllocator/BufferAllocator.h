@@ -217,10 +217,10 @@ class BufferAllocator {
      * };
      */
     bool uses_legacy_ion_iface_ = false;
-    std::vector<struct ion_heap_data> ion_heap_info_;
+    //std::vector<struct ion_heap_data> ion_heap_info_;
     inline static bool logged_interface_ = false;
     /* stores a map of dmabuf heap names to equivalent ion heap configurations. */
-    std::unordered_map<std::string, struct IonHeapConfig> heap_name_to_config_;
+    //std::unordered_map<std::string, struct IonHeapConfig> heap_name_to_config_;
     /* protects heap_name_to_config_ from concurrent access */
     std::shared_mutex heap_name_to_config_mutex_;
 };
